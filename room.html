@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html>
+<head>
+<title>Study Room</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body class="room">
+<h2>🏀🌼 Dayan & Naomi Study Room</h2>
+
+<div class="features-grid">
+  <!-- Timer Card -->
+  <div class="card">
+    <h3 id="timer">25:00</h3>
+    <p>Quarter: <span id="quarter">1</span>/4</p>
+    <button onclick="startTimer()">Start Quarter</button>
+    <button onclick="resetTimer()">Reset</button>
+  </div>
+
+  <!-- Status Card -->
+  <div class="card">
+    <h4>Status</h4>
+    <select onchange="setStatus(this.value)">
+      <option>Studying</option>
+      <option>On Break</option>
+      <option>Away</option>
+    </select>
+    <button onclick="sendNudge()">🌼 Send Nudge</button>
+  </div>
+
+  <!-- Tasks Card -->
+  <div class="card">
+    <h4>My Tasks</h4>
+    <div style="display: flex; gap: 8px;">
+      <input id="taskInput" placeholder="New task" 
+             onkeypress="handleTaskKeyPress(event)">
+      <button onclick="addTask()">Add</button>
+    </div>
+    <ul id="taskList"></ul>
+  </div>
+
+  <!-- Chat Card -->
+  <div class="card">
+    <h4>Study Chat</h4>
+    <div class="chat-container">
+      <div class="chat-messages" id="chatMessages"></div>
+      <div class="chat-input-container">
+        <input id="messageInput" placeholder="Type a message..."
+               onkeypress="handleChatKeyPress(event)">
+        <button onclick="sendMessage()">Send</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Materials Card -->
+  <div class="card">
+    <h4>Study Materials</h4>
+    <div class="file-input-container">
+      <input type="file" id="materialFile">
+      <input type="text" id="materialDesc" placeholder="Description (optional)">
+      <button onclick="uploadMaterial()">Upload</button>
+    </div>
+    <ul id="materialsList"></ul>
+  </div>
+
+  <!-- Streak Card -->
+  <div class="card">
+    <h4>🔥 Study Streak</h4>
+    <p id="streak">0 days</p>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="supabase.js"></script>
+<script src="script.js"></script>
+</body>
+</html>
