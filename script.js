@@ -1,10 +1,8 @@
 let time = 1500;
 let interval;
 let quarter = 1;
-let chatSubscription;
 let currentUser = null;
 
-// Initialize user on page load
 async function initUser() {
   try {
     const { data: { user } } = await supabaseClient.auth.getUser();
@@ -95,7 +93,7 @@ async function setStatus(status) {
   }
 }
 
-// Tasks - Enhanced
+// Tasks
 async function addTask() {
   if (!currentUser) {
     await initUser();
@@ -203,7 +201,7 @@ async function deleteTask(taskId) {
   }
 }
 
-// Chat System
+// Chat
 async function sendMessage() {
   if (!currentUser) {
     await initUser();
@@ -242,73 +240,6 @@ async function sendMessage() {
   }
 }
 
-async function loadMessages() {
-  try {
-    const { data: messages, error } = await supabaseClient
-      .from("chat_messages")
-      .select("*")
-      .order("created_at", { ascending: true })
-      .limit(50);
-    
-    if (error) throw error;
-    
-    const chatMessages = document.getElementById("chatMessages");
-    if (!chatMessages) return;
-    
-    chatMessages.innerHTML = "";
-    
-    if (!messages || messages.length === 0) {
-      chatMessages.innerHTML = "<div class='message'>No messages yet. Start the conversation!</div>";
-      return;
-    }
-    
-    messages.forEach(msg => {
-      const div = document.createElement("div");
-      div.className = "message";
-      const username = msg.username || 'User';
-      const time = new Date(msg.created_at).toLocaleTimeString([], { 
-        hour: '2-digit', 
-        minute: '2-digit' 
-      });
-      
-      div.innerHTML = `
-        <strong>${username}:</strong> ${msg.message}
-        <small>${time}</small>
-      `;
-      chatMessages.appendChild(div);
-    });
-    
-    // Scroll to bottom
-    chatMessages.scrollTop = chatMessages.scrollHeight;
-  } catch (error) {
-    console.error("Error loading messages:", error);
-  }
-}
-
-function setupChatSubscription() {
-  if (chatSubscription) return;
-  
-  try {
-    chatSubscription = supabaseClient
-      .channel('chat-room')
-      .on('postgres_changes', 
-        { 
-          event: 'INSERT', 
-          schema: 'public', 
-          table: 'chat_messages' 
-        }, 
-        () => {
-          loadMessages();
-        }
-      )
-      .subscribe();
-    
-    console.log("Chat subscription active");
-  } catch (error) {
-    console.error("Error setting up chat subscription:", error);
-  }
-}
-
 // Materials Upload
 async function uploadMaterial() {
   if (!currentUser) {
@@ -328,8 +259,7 @@ async function uploadMaterial() {
     return;
   }
   
-  // Validate file size (10MB limit)
-  const maxSize = 10 * 1024 * 1024; // 10MB
+  const maxSize = 10 * 1024 * 1024;
   if (file.size > maxSize) {
     alert("File too large. Maximum size is 10MB");
     return;
@@ -339,7 +269,6 @@ async function uploadMaterial() {
     const fileName = `${Date.now()}_${file.name.replace(/[^a-zA-Z0-9._-]/g, '_')}`;
     const filePath = `materials/${currentUser.id}/${fileName}`;
     
-    // Upload to storage
     const { error: uploadError } = await supabaseClient.storage
       .from('materials')
       .upload(filePath, file);
@@ -348,7 +277,6 @@ async function uploadMaterial() {
       throw new Error("Upload failed: " + uploadError.message);
     }
     
-    // Save to database
     const { error: dbError } = await supabaseClient.from("materials").insert([
       {
         user_id: currentUser.id,
@@ -364,7 +292,6 @@ async function uploadMaterial() {
       throw new Error("Database error: " + dbError.message);
     }
     
-    // Clear form
     fileInput.value = "";
     descriptionInput.value = "";
     
@@ -401,7 +328,6 @@ async function loadMaterials() {
       const li = document.createElement("li");
       const fileSize = (material.filesize / 1024).toFixed(1);
       
-      // Get public URL
       const { data: { publicUrl } } = supabaseClient.storage
         .from('materials')
         .getPublicUrl(material.filepath);
@@ -439,28 +365,461 @@ function sendNudge() {
   alert("🌼 Gentle nudge sent! Stay focused.");
 }
 
-// Initialize everything
+// ========== REAL-TIME ENHANCEMENT FUNCTIONS ==========
+let presenceSubscription;
+let statusSubscription;
+let typingSubscription;
+let chatSubscription;
+let onlineUsers = new Map();
+
+// Initialize all real-time subscriptions
+async function setupAllRealtimeSubscriptions() {
+  await setupPresenceSubscription();
+  await setupStatusSubscription();
+  await setupTypingSubscription();
+  await setupMessageReadSubscription();
+}
+
+// 1. Presence System
+async function setupPresenceSubscription() {
+  // Set user as online
+  await updatePresence(true);
+  
+  // Subscribe to other users' presence
+  presenceSubscription = supabaseClient
+    .channel('online-users')
+    .on('postgres_changes', 
+      { 
+        event: '*', 
+        schema: 'public', 
+        table: 'user_presence' 
+      }, 
+      async (payload) => {
+        if (payload.new.user_id === currentUser.id) return;
+        
+        const user = await getUserProfile(payload.new.user_id);
+        onlineUsers.set(payload.new.user_id, {
+          ...user,
+          is_online: payload.new.is_online,
+          last_seen: payload.new.last_seen
+        });
+        
+        updateOnlineUsersUI();
+      }
+    )
+    .subscribe();
+  
+  // Handle page visibility
+  document.addEventListener('visibilitychange', async () => {
+    if (document.hidden) {
+      await updatePresence(false);
+    } else {
+      await updatePresence(true);
+    }
+  });
+  
+  // Update presence periodically
+  setInterval(async () => {
+    if (!document.hidden) {
+      await updatePresence(true);
+    }
+  }, 30000);
+}
+
+async function updatePresence(isOnline) {
+  try {
+    await supabaseClient
+      .from('user_presence')
+      .upsert({
+        user_id: currentUser.id,
+        is_online: isOnline,
+        last_seen: new Date().toISOString(),
+        session_id: generateSessionId()
+      });
+  } catch (error) {
+    console.error('Error updating presence:', error);
+  }
+}
+
+// 2. Enhanced Status System
+async function setupStatusSubscription() {
+  statusSubscription = supabaseClient
+    .channel('user-status')
+    .on('postgres_changes',
+      {
+        event: '*',
+        schema: 'public',
+        table: 'status'
+      },
+      async (payload) => {
+        if (payload.new.user_id === currentUser.id) return;
+        
+        const user = await getUserProfile(payload.new.user_id);
+        const statusElement = document.getElementById(`user-status-${payload.new.user_id}`);
+        
+        if (statusElement) {
+          statusElement.textContent = payload.new.status;
+          statusElement.className = `status-badge status-${payload.new.status.toLowerCase().replace(' ', '-')}`;
+        }
+      }
+    )
+    .subscribe();
+}
+
+// 3. Typing Indicators
+let typingTimeout;
+let isTyping = false;
+
+async function setupTypingSubscription() {
+  typingSubscription = supabaseClient
+    .channel('typing-indicators')
+    .on('postgres_changes',
+      {
+        event: '*',
+        schema: 'public',
+        table: 'typing_indicators'
+      },
+      async (payload) => {
+        if (payload.new.user_id === currentUser.id) return;
+        
+        const user = await getUserProfile(payload.new.user_id);
+        const typingIndicator = document.getElementById('typing-indicator');
+        
+        if (typingIndicator) {
+          if (payload.new.is_typing) {
+            typingIndicator.textContent = `${user.username || 'User'} is typing...`;
+            typingIndicator.style.display = 'block';
+          } else {
+            typingIndicator.style.display = 'none';
+          }
+        }
+      }
+    )
+    .subscribe();
+}
+
+function handleTyping() {
+  if (!isTyping) {
+    isTyping = true;
+    updateTypingIndicator(true);
+  }
+  
+  clearTimeout(typingTimeout);
+  typingTimeout = setTimeout(() => {
+    isTyping = false;
+    updateTypingIndicator(false);
+  }, 1000);
+}
+
+async function updateTypingIndicator(isTyping) {
+  try {
+    await supabaseClient
+      .from('typing_indicators')
+      .upsert({
+        user_id: currentUser.id,
+        is_typing: isTyping,
+        updated_at: new Date().toISOString()
+      });
+  } catch (error) {
+    console.error('Error updating typing indicator:', error);
+  }
+}
+
+// 4. Message Read Receipts (BIGINT message_id compatible)
+async function setupMessageReadSubscription() {
+  await markMessagesAsRead();
+  
+  supabaseClient
+    .channel('message-read-receipts')
+    .on('postgres_changes',
+      {
+        event: 'INSERT',
+        schema: 'public',
+        table: 'chat_messages'
+      },
+      async () => {
+        await markMessagesAsRead();
+      }
+    )
+    .subscribe();
+}
+
+async function markMessagesAsRead() {
+  try {
+    const { data: messages, error } = await supabaseClient
+      .from('chat_messages')
+      .select('id, user_id')
+      .neq('user_id', currentUser.id)
+      .order('created_at', { ascending: false })
+      .limit(20);
+    
+    if (error) throw error;
+    
+    if (messages && messages.length > 0) {
+      for (const msg of messages) {
+        const { data: existing } = await supabaseClient
+          .from('read_receipts')
+          .select('id')
+          .eq('user_id', currentUser.id)
+          .eq('message_id', msg.id)
+          .maybeSingle();
+        
+        if (!existing) {
+          await supabaseClient
+            .from('read_receipts')
+            .insert({
+              user_id: currentUser.id,
+              message_id: msg.id
+            });
+        }
+      }
+    }
+  } catch (error) {
+    console.error('Error marking messages as read:', error);
+  }
+}
+
+// 5. Original Chat Subscription (keep this)
+function setupChatSubscription() {
+  if (chatSubscription) return;
+  
+  chatSubscription = supabaseClient
+    .channel('chat-room')
+    .on('postgres_changes', 
+      { 
+        event: 'INSERT', 
+        schema: 'public', 
+        table: 'chat_messages' 
+      }, 
+      () => {
+        loadMessages();
+      }
+    )
+    .subscribe();
+}
+
+// 6. Notifications System
+async function setupNotifications() {
+  if ('Notification' in window && Notification.permission === 'default') {
+    await Notification.requestPermission();
+  }
+  
+  supabaseClient
+    .channel('user-notifications')
+    .on('postgres_changes',
+      {
+        event: 'INSERT',
+        schema: 'public',
+        table: 'notifications',
+        filter: `user_id=eq.${currentUser.id}`
+      },
+      (payload) => {
+        showNotification(payload.new);
+      }
+    )
+    .subscribe();
+}
+
+async function createNotification(notification) {
+  try {
+    const { error } = await supabaseClient
+      .from('notifications')
+      .insert([notification]);
+    
+    if (error) throw error;
+  } catch (error) {
+    console.error('Error creating notification:', error);
+  }
+}
+
+function showNotification(notification) {
+  if ('Notification' in window && Notification.permission === 'granted') {
+    new Notification(notification.title, {
+      body: notification.message,
+      icon: '/favicon.ico'
+    });
+  }
+  
+  const notificationBell = document.getElementById('notification-bell');
+  if (notificationBell) {
+    notificationBell.classList.add('has-notifications');
+    showNotificationToast(notification);
+  }
+}
+
+// 7. Helper Functions
+async function getUserProfile(userId) {
+  try {
+    const { data, error } = await supabaseClient
+      .from('user_profiles')
+      .select('username, avatar_url')
+      .eq('id', userId)
+      .maybeSingle();
+    
+    return data || { username: 'User' };
+  } catch (error) {
+    return { username: 'User' };
+  }
+}
+
+function generateSessionId() {
+  return 'session_' + Math.random().toString(36).substr(2, 9);
+}
+
+function updateOnlineUsersUI() {
+  const onlineList = document.getElementById('online-users-list');
+  if (!onlineList) return;
+  
+  onlineList.innerHTML = '';
+  
+  onlineUsers.forEach((user, userId) => {
+    const userElement = document.createElement('div');
+    userElement.className = 'online-user';
+    userElement.innerHTML = `
+      <span class="user-avatar">${user.username?.charAt(0) || 'U'}</span>
+      <span class="user-name">${user.username || 'User'}</span>
+      <span class="status-dot ${user.is_online ? 'online' : 'offline'}"></span>
+    `;
+    onlineList.appendChild(userElement);
+  });
+  
+  // Update online count
+  const onlineCount = document.getElementById('online-count');
+  if (onlineCount) {
+    const count = Array.from(onlineUsers.values()).filter(u => u.is_online).length;
+    onlineCount.textContent = count;
+  }
+}
+
+// 8. Notifications Panel Functions
+function showNotificationsPanel() {
+  const panel = document.getElementById('notifications-panel');
+  panel.style.display = panel.style.display === 'none' ? 'block' : 'none';
+  if (panel.style.display === 'block') {
+    loadNotifications();
+  }
+}
+
+async function loadNotifications() {
+  try {
+    const { data: notifications, error } = await supabaseClient
+      .from('notifications')
+      .select('*')
+      .eq('user_id', currentUser.id)
+      .order('created_at', { ascending: false })
+      .limit(20);
+    
+    if (error) throw error;
+    
+    const notificationsList = document.getElementById('notifications-list');
+    if (!notificationsList) return;
+    
+    notificationsList.innerHTML = '';
+    
+    if (!notifications || notifications.length === 0) {
+      notificationsList.innerHTML = '<div class="notification-item">No notifications</div>';
+      return;
+    }
+    
+    notifications.forEach(notification => {
+      const div = document.createElement('div');
+      div.className = `notification-item ${notification.is_read ? 'read' : 'unread'}`;
+      div.innerHTML = `
+        <strong>${notification.title}</strong>
+        <p>${notification.message}</p>
+        <small>${new Date(notification.created_at).toLocaleString()}</small>
+        ${!notification.is_read ? '<button onclick="markNotificationAsRead(\'' + notification.id + '\')">✓</button>' : ''}
+      `;
+      notificationsList.appendChild(div);
+    });
+  } catch (error) {
+    console.error('Error loading notifications:', error);
+    const notificationsList = document.getElementById('notifications-list');
+    if (notificationsList) {
+      notificationsList.innerHTML = '<div class="notification-item">Error loading notifications</div>';
+    }
+  }
+}
+
+async function markNotificationAsRead(notificationId) {
+  try {
+    await supabaseClient
+      .from('notifications')
+      .update({ is_read: true })
+      .eq('id', notificationId);
+    
+    await loadNotifications();
+  } catch (error) {
+    console.error('Error marking notification as read:', error);
+  }
+}
+
+async function markAllNotificationsAsRead() {
+  try {
+    await supabaseClient
+      .from('notifications')
+      .update({ is_read: true })
+      .eq('user_id', currentUser.id)
+      .eq('is_read', false);
+    
+    await loadNotifications();
+    
+    const notificationBell = document.getElementById('notification-bell');
+    if (notificationBell) {
+      notificationBell.classList.remove('has-notifications');
+    }
+  } catch (error) {
+    console.error('Error marking all notifications as read:', error);
+  }
+}
+
+function showNotificationToast(notification) {
+  const toast = document.createElement('div');
+  toast.className = 'notification-toast';
+  toast.innerHTML = `
+    <strong>${notification.title}</strong>
+    <p>${notification.message}</p>
+  `;
+  
+  document.body.appendChild(toast);
+  
+  setTimeout(() => {
+    toast.remove();
+  }, 5000);
+}
+
+// ========== INITIALIZATION ==========
 async function initializeApp() {
   try {
     await initUser();
     
-    // Load data if we're in the room page
-    if (document.getElementById("taskList")) {
-      await loadTasks();
-    }
-    
-    if (document.getElementById("chatMessages")) {
-      await loadMessages();
-      setupChatSubscription();
-    }
-    
-    if (document.getElementById("materialsList")) {
-      await loadMaterials();
-    }
-    
-    // Set default status
-    if (currentUser && document.querySelector("select[onchange*='setStatus']")) {
-      await setStatus("Studying");
+    if (currentUser) {
+      // Setup all real-time features
+      await setupAllRealtimeSubscriptions();
+      await setupNotifications();
+      
+      // Load data
+      if (document.getElementById("taskList")) {
+        await loadTasks();
+      }
+      
+      if (document.getElementById("chatMessages")) {
+        await loadMessages();
+        setupChatSubscription();
+        
+        const messageInput = document.getElementById("messageInput");
+        if (messageInput) {
+          messageInput.addEventListener('input', handleTyping);
+        }
+      }
+      
+      if (document.getElementById("materialsList")) {
+        await loadMaterials();
+      }
+      
+      if (document.querySelector("select[onchange*='setStatus']")) {
+        await setStatus("Studying");
+      }
     }
     
     console.log("App initialized successfully");
@@ -485,7 +844,7 @@ function handleTaskKeyPress(event) {
   }
 }
 
-// Logout function (optional)
+// Logout function
 async function logout() {
   await supabaseClient.auth.signOut();
   window.location.href = "index.html";
@@ -508,6 +867,17 @@ function addLogoutButton() {
 document.addEventListener('DOMContentLoaded', function() {
   initializeApp();
   
-  // Add logout button after a short delay
   setTimeout(addLogoutButton, 1000);
+});
+
+// Cleanup
+window.addEventListener('beforeunload', async () => {
+  if (currentUser) {
+    await updatePresence(false);
+  }
+  
+  if (presenceSubscription) supabaseClient.removeChannel(presenceSubscription);
+  if (statusSubscription) supabaseClient.removeChannel(statusSubscription);
+  if (typingSubscription) supabaseClient.removeChannel(typingSubscription);
+  if (chatSubscription) supabaseClient.removeChannel(chatSubscription);
 });
