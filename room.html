@@ -5,18 +5,6 @@
 <link rel="stylesheet" href="style.css">
 </head>
 <body class="room">
-
-<div class="notification-bell" id="notification-bell" onclick="showNotificationsPanel()" title="Notifications">
-  🔔
-</div>
-
-<div class="online-users-panel">
-  <h4>👥 Online Study Buddies <span class="online-count" id="online-count">0</span></h4>
-  <div id="online-users-list">
-    <!-- Online users will appear here -->
-  </div>
-</div>
-
 <h2>🏀🌼 Dayan & Naomi Study Room</h2>
 
 <div class="features-grid">
@@ -50,16 +38,14 @@
     <ul id="taskList"></ul>
   </div>
 
-  <!-- Chat Card (single instance) -->
+  <!-- Chat Card -->
   <div class="card">
     <h4>Study Chat</h4>
-    <div class="typing-indicator" id="typing-indicator"></div>
     <div class="chat-container">
       <div class="chat-messages" id="chatMessages"></div>
       <div class="chat-input-container">
         <input id="messageInput" placeholder="Type a message..."
-               onkeypress="handleChatKeyPress(event)"
-               oninput="handleTyping()">
+               onkeypress="handleChatKeyPress(event)">
         <button onclick="sendMessage()">Send</button>
       </div>
     </div>
@@ -81,17 +67,6 @@
     <h4>🔥 Study Streak</h4>
     <p id="streak">0 days</p>
   </div>
-</div>
-
-<!-- Notifications Panel (hidden by default) -->
-<div id="notifications-panel" class="card" style="display: none;">
-  <h4>📢 Notifications</h4>
-  <div id="notifications-list">
-    <!-- Notifications will appear here -->
-  </div>
-  <button onclick="markAllNotificationsAsRead()" class="secondary" style="width: 100%; margin-top: 10px;">
-    Mark all as read
-  </button>
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
